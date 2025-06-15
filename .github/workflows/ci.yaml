@@ -5,7 +5,13 @@ on:
     branches: [main, dev]
   pull_request:
     branches: [main, dev]
-
+  path-ignore:
+    - '**/*.md'
+    - '**/*.txt'
+    - '**/*.pdf'
+    - '**/*.png'
+    - '**/*.jpg'
+    - '**/*.jpeg'
 jobs:
   test:
     runs-on: ubuntu-latest
