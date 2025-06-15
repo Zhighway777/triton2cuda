@@ -3,15 +3,22 @@ name: CI for Triton2CUDA
 on:
   push:
     branches: [main, dev]
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.txt'
+      - '**/*.pdf'
+      - '**/*.png'
+      - '**/*.jpg'
+      - '**/*.jpeg'
   pull_request:
     branches: [main, dev]
-  paths-ignore:
-    - '**/*.md'
-    - '**/*.txt'
-    - '**/*.pdf'
-    - '**/*.png'
-    - '**/*.jpg'
-    - '**/*.jpeg'
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.txt'
+      - '**/*.pdf'
+      - '**/*.png'
+      - '**/*.jpg'
+      - '**/*.jpeg'
 jobs:
   test:
     runs-on: ubuntu-latest
