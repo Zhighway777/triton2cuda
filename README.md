@@ -24,3 +24,6 @@ A tool based LLM to translate Triton to CUDA
 ### CUDA
 
 ### 其他杂项/论文等
+
+## 注意
+1. 原赛题的文件夹为triton2cuda/solution，solution之外的文件均为我后来添加用于测试或者git操作的文件
