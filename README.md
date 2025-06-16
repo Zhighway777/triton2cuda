@@ -15,13 +15,16 @@ A tool based LLM to translate Triton to CUDA
 
 ## 相关资料（我们可以一起补充）
 
-### triton
+### Triton
+[⭐|技术博客|Triton执行流程](https://www.cnblogs.com/BobHuang/p/18324040)
 
 ### LLM/Prompt
 
 ### 编译器
 
 ### CUDA
+[⭐|技术博客|CUDA极简教程](https://zhuanlan.zhihu.com/p/34587739)
+[技术博客|CUDA教程](https://face2ai.com/program-blog/#GPU%E7%BC%96%E7%A8%8B%EF%BC%88CUDA%EF%BC%89)
 [技术博客|将PTX代码逆向反汇编为CUDA C++](https://forums.developer.nvidia.com/t/is-there-a-reverse-engineering-tool-which-gives-approximate-cuda-c-code-from-ptx-code/305665)
 
 ### 其他杂项/论文等
