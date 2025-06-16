@@ -22,6 +22,7 @@ A tool based LLM to translate Triton to CUDA
 ### 编译器
 
 ### CUDA
+[技术博客|将PTX代码逆向反汇编为CUDA C++](https://forums.developer.nvidia.com/t/is-there-a-reverse-engineering-tool-which-gives-approximate-cuda-c-code-from-ptx-code/305665)
 
 ### 其他杂项/论文等
 
