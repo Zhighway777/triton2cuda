@@ -21,6 +21,7 @@ A tool based LLM to translate Triton to CUDA
 
 ### LLM/Prompt
 [教程|提示词工程指南](https://www.promptingguide.ai/zh)
+[DeepSeek 提示词样例](https://api-docs.deepseek.com/prompt-library)
 ### 编译器
 
 ### CUDA
