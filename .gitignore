@@ -1,0 +1,5 @@
+myenv/
+my-env/
+python-env/
+*-venv/
+*_env/
