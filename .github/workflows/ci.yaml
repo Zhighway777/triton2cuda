@@ -32,7 +32,7 @@ jobs:
     - name: Set up Python 3.10
       uses: actions/setup-python@v4
       with:
-        python-version: '3.10.12'  # 匹配比赛环境
+        python-version: '3.10.12'
 
     - name: Install linting tools
       run: |
@@ -63,17 +63,16 @@ jobs:
     - name: Set up Python 3.10.12
       uses: actions/setup-python@v4
       with:
-        python-version: '3.10.12'  # 精确匹配比赛环境
+        python-version: '3.10.12'
 
     - name: Install system dependencies
       run: |
         sudo apt-get update -qq
         sudo apt-get install -y build-essential ninja-build zip
 
-    - name: Install PyTorch CPU version (matching competition)
+    - name: Install PyTorch CPU version
       run: |
         pip install --upgrade pip
-        # 使用CPU版本的PyTorch 2.4.0，接近比赛环境
         pip install torch==2.4.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
     - name: Install other dependencies
@@ -99,7 +98,6 @@ jobs:
             from tri2cu import triton2cuda
             print('✅ tri2cu import successful')
             
-            # 测试基本函数调用
             test_code = '''
 import torch
 import triton
@@ -134,42 +132,38 @@ def add_kernel(x_ptr, y_ptr, output_ptr, n_elements, BLOCK_SIZE: tl.constexpr):
     - name: Test submission format compliance
       run: |
         cd solution/example_submission
-        # 检查是否只有tri2cu.py文件（符合提交要求）
         if [ -f "tri2cu.py" ]; then
             echo "✅ tri2cu.py exists"
-            # 检查文件结构是否符合提交要求
             python -c "
-            import ast
-            import sys
-            
-            try:
-                with open('tri2cu.py', 'r') as f:
-                    content = f.read()
-                
-                # 检查语法
-                ast.parse(content)
-                print('✅ tri2cu.py syntax valid')
-                
-                # 检查是否包含triton2cuda函数
-                tree = ast.parse(content)
-                has_triton2cuda = False
-                for node in ast.walk(tree):
-                    if isinstance(node, ast.FunctionDef) and node.name == 'triton2cuda':
-                        has_triton2cuda = True
-                        break
-                
-                if has_triton2cuda:
-                    print('✅ triton2cuda function found')
-                else:
-                    print('❌ triton2cuda function not found')
-                    sys.exit(1)
-                    
-            except SyntaxError as e:
-                print(f'❌ Syntax error in tri2cu.py: {e}')
-                sys.exit(1)
-            except Exception as e:
-                print(f'❌ Error checking tri2cu.py: {e}')
-                sys.exit(1)
+import ast
+import sys
+
+try:
+    with open('tri2cu.py', 'r') as f:
+        content = f.read()
+    
+    ast.parse(content)
+    print('✅ tri2cu.py syntax valid')
+    
+    tree = ast.parse(content)
+    has_triton2cuda = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == 'triton2cuda':
+            has_triton2cuda = True
+            break
+    
+    if has_triton2cuda:
+        print('✅ triton2cuda function found')
+    else:
+        print('❌ triton2cuda function not found')
+        sys.exit(1)
+        
+except SyntaxError as e:
+    print(f'❌ Syntax error in tri2cu.py: {e}')
+    sys.exit(1)
+except Exception as e:
+    print(f'❌ Error checking tri2cu.py: {e}')
+    sys.exit(1)
             "
         else
             echo "❌ tri2cu.py not found"
@@ -179,15 +173,12 @@ def add_kernel(x_ptr, y_ptr, output_ptr, n_elements, BLOCK_SIZE: tl.constexpr):
     - name: Test packaging compliance
       run: |
         cd solution
-        # 测试打包流程（模拟提交要求）
         if [ -f "script/bundle.sh" ]; then
             chmod +x script/bundle.sh
             ./script/bundle.sh example_submission
             if [ -f "example_submission.zip" ]; then
                 echo "✅ Packaging successful"
-                # 检查压缩包内容
                 unzip -l example_submission.zip
-                # 验证压缩包只包含必要文件
                 file_count=$(unzip -l example_submission.zip | grep -c "tri2cu.py")
                 if [ "$file_count" -eq 1 ]; then
                     echo "✅ Package contains tri2cu.py"
