@@ -34,7 +34,7 @@ vector_add_cpp_source = (
 )
 
 # Compile the inline CUDA code for element-wise addition
-vector_add = load_inline(
+vector_add = load_inline( 
     name="vector_add",
     cpp_sources=vector_add_cpp_source,
     cuda_sources=vector_add_source,

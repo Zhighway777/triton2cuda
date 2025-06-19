@@ -1,19 +1,23 @@
 from zhipuai import ZhipuAI
+from prompt import get_full_prompt, get_simple_prompt
 
-main_prompt = '''Convert the following triton code to equivalent CUDA code.
-```python
+# main_prompt = '''Convert the following triton code to equivalent CUDA code.
+# ```python
 
-'''
-suffix_instruction ='''
-```
-You must ensure that the output code is fully functional and can be run. Your code must provide a class named ModelNew that inherits from torch.nn.Module and has a forward method that takes in the same input tensors as the `Model` class in the triton kernel code and returns the same output tensors.
-'''
+# '''
+# suffix_instruction ='''
+# ```
+# You must ensure that the output code is fully functional and can be run. Your code must provide a class named ModelNew that inherits from torch.nn.Module and has a forward method that takes in the same input tensors as the `Model` class in the triton kernel code and returns the same output tensors.
+# '''
 
-def get_full_prompt(triton_code):
-    return main_prompt + triton_code + suffix_instruction
+# def get_full_prompt(triton_code):
+#     return main_prompt + triton_code + suffix_instruction
+
+
 
 def triton2cuda(triton_code):
-    client = ZhipuAI(api_key="Your Key")  # 填写您自己的APIKey
+    #API Key, plantform: zhipuai, name:llm_compiler_api
+    client = ZhipuAI(api_key="5bf98ea765f642aeb720420e522592f7.DWMrwJ2rfsWPYhHJ") 
     response = client.chat.completions.create(
         model="glm-4-plus",  # 填写需要调用的模型编码
         messages=[
@@ -21,6 +25,7 @@ def triton2cuda(triton_code):
                 "role": "system",
                 "content": "You are a helpful llm transpiler assistant.",
             },
+            #you can use get_full_prompt or get_simple_prompt in prompt.py
             {"role": "user", "content": get_full_prompt(triton_code)},
         ],
     )
