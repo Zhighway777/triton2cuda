@@ -3,3 +3,6 @@ my-env/
 python-env/
 *-venv/
 *_env/
+*.zip
+__pycache__/
+*.pyc
