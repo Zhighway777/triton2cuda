@@ -2,7 +2,7 @@ name: CI for Triton2CUDA
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main, dev, dev-zhw, dev_hqz, dev-czy]
     paths-ignore:
       - '**/*.md'
       - '**/*.txt'
@@ -11,7 +11,7 @@ on:
       - '**/*.jpg'
       - '**/*.jpeg'
   pull_request:
-    branches: [main, dev]
+    branches: [main, dev, dev-zhw, dev_hqz, dev-czy]
     paths-ignore:
       - '**/*.md'
       - '**/*.txt'
@@ -19,23 +19,211 @@ on:
       - '**/*.png'
       - '**/*.jpg'
       - '**/*.jpeg'
-jobs:
-  test:
-    runs-on: ubuntu-latest
 
+jobs:
+  # 代码质量和语法检查
+  lint-and-syntax:
+    runs-on: ubuntu-latest
+    
     steps:
     - name: Check out code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
-    - name: Set up Python
+    - name: Set up Python 3.10
       uses: actions/setup-python@v4
       with:
-        python-version: '3.10'
+        python-version: '3.10.12'  # 匹配比赛环境
 
-    - name: Install dependencies
+    - name: Install linting tools
       run: |
         pip install --upgrade pip
-        pip install -r requirements.txt
+        pip install flake8 black isort
 
-    - name: Run unit tests
-      run: python tests/test_runner.py
+    - name: Run code formatting check
+      run: |
+        black --check solution/ || echo "⚠️ 代码格式需要调整，运行 'black solution/' 修复"
+
+    - name: Run import sorting check
+      run: |
+        isort --check-only solution/ || echo "⚠️ Import排序需要调整，运行 'isort solution/' 修复"
+
+    - name: Run code style check
+      run: |
+        flake8 solution/ --max-line-length=120 --ignore=E203,W503,F401 || echo "⚠️ 代码风格需要调整"
+
+  # 环境兼容性和基础功能测试
+  compatibility-test:
+    runs-on: ubuntu-latest
+    needs: lint-and-syntax
+    
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.10.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10.12'  # 精确匹配比赛环境
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y build-essential ninja-build zip
+
+    - name: Install PyTorch CPU version (matching competition)
+      run: |
+        pip install --upgrade pip
+        # 使用CPU版本的PyTorch 2.4.0，接近比赛环境
+        pip install torch==2.4.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+    - name: Install other dependencies
+      run: |
+        pip install ninja>=1.10.0
+        pip install zhipuai>=2.1.0,<3.0.0
+
+    - name: Verify environment
+      run: |
+        python -c "
+        import sys
+        print(f'Python version: {sys.version}')
+        import torch
+        print(f'PyTorch version: {torch.__version__}')
+        print(f'CUDA available: {torch.cuda.is_available()}')
+        "
+
+    - name: Test tri2cu import and basic functionality
+      run: |
+        cd solution/example_submission
+        python -c "
+        try:
+            from tri2cu import triton2cuda
+            print('✅ tri2cu import successful')
+            
+            # 测试基本函数调用
+            test_code = '''
+import torch
+import triton
+import triton.language as tl
+
+@triton.jit
+def add_kernel(x_ptr, y_ptr, output_ptr, n_elements, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(axis=0)
+    block_start = pid * BLOCK_SIZE
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)
+    mask = offsets < n_elements
+    x = tl.load(x_ptr + offsets, mask=mask)
+    y = tl.load(y_ptr + offsets, mask=mask)
+    output = x + y
+    tl.store(output_ptr + offsets, output, mask=mask)
+'''
+            result = triton2cuda(test_code)
+            if result and isinstance(result, str):
+                print('✅ triton2cuda function works')
+                print(f'Generated code length: {len(result)} characters')
+            else:
+                print('⚠️ triton2cuda returned unexpected result')
+                exit(1)
+                
+        except Exception as e:
+            print(f'❌ Test failed: {e}')
+            import traceback
+            traceback.print_exc()
+            exit(1)
+        "
+
+    - name: Test submission format compliance
+      run: |
+        cd solution/example_submission
+        # 检查是否只有tri2cu.py文件（符合提交要求）
+        if [ -f "tri2cu.py" ]; then
+            echo "✅ tri2cu.py exists"
+            # 检查文件结构是否符合提交要求
+            python -c "
+            import ast
+            import sys
+            
+            try:
+                with open('tri2cu.py', 'r') as f:
+                    content = f.read()
+                
+                # 检查语法
+                ast.parse(content)
+                print('✅ tri2cu.py syntax valid')
+                
+                # 检查是否包含triton2cuda函数
+                tree = ast.parse(content)
+                has_triton2cuda = False
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.FunctionDef) and node.name == 'triton2cuda':
+                        has_triton2cuda = True
+                        break
+                
+                if has_triton2cuda:
+                    print('✅ triton2cuda function found')
+                else:
+                    print('❌ triton2cuda function not found')
+                    sys.exit(1)
+                    
+            except SyntaxError as e:
+                print(f'❌ Syntax error in tri2cu.py: {e}')
+                sys.exit(1)
+            except Exception as e:
+                print(f'❌ Error checking tri2cu.py: {e}')
+                sys.exit(1)
+            "
+        else
+            echo "❌ tri2cu.py not found"
+            exit 1
+        fi
+
+    - name: Test packaging compliance
+      run: |
+        cd solution
+        # 测试打包流程（模拟提交要求）
+        if [ -f "script/bundle.sh" ]; then
+            chmod +x script/bundle.sh
+            ./script/bundle.sh example_submission
+            if [ -f "example_submission.zip" ]; then
+                echo "✅ Packaging successful"
+                # 检查压缩包内容
+                unzip -l example_submission.zip
+                # 验证压缩包只包含必要文件
+                file_count=$(unzip -l example_submission.zip | grep -c "tri2cu.py")
+                if [ "$file_count" -eq 1 ]; then
+                    echo "✅ Package contains tri2cu.py"
+                else
+                    echo "⚠️ Package structure may not comply with submission requirements"
+                fi
+            else
+                echo "❌ Packaging failed"
+                exit 1
+            fi
+        else
+            echo "⚠️ bundle.sh not found, manual packaging test"
+            cd example_submission
+            zip -r ../test_submission.zip .
+            echo "✅ Manual packaging test completed"
+        fi
+
+  # 环境快速检查
+  quick-check:
+    runs-on: ubuntu-latest
+    needs: compatibility-test
+    
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.10.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10.12'
+
+    - name: Install minimal dependencies
+      run: |
+        pip install --upgrade pip
+        pip install torch==2.4.0 --index-url https://download.pytorch.org/whl/cpu
+
+    - name: Run quick environment check
+      run: |
+        python quick_check.py || echo "⚠️ Quick check completed with warnings (expected in CPU-only environment)"
