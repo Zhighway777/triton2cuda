@@ -75,6 +75,8 @@ pip install -r requirements.txt
 ### LLM/Prompt
 [教程|提示词工程指南](https://www.promptingguide.ai/zh)  
 [DeepSeek 提示词样例](https://api-docs.deepseek.com/prompt-library)  
+[Test-Time Scaling](https://zhuanlan.zhihu.com/p/773907223)
+
 ### 编译器
 
 ### CUDA
