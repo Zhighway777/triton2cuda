@@ -2,6 +2,59 @@
 A tool based LLM to translate Triton to CUDA
 
 # 主要目标
+## 快速完成题目基本要求，保证正确性
+
+## 环境配置流程
+### 1. 配置环境
+```bash
+./setup.sh
+```
+
+### 2. 激活环境
+```bash
+./activate_env.sh
+```
+
+## 环境要求
+
+- Ubuntu 22.04+
+- Python 3.10+
+- NVIDIA驱动
+
+## 安装内容
+
+- CUDA 12.4工具包
+- PyTorch 2.4.0 (CUDA 12.4)
+- Triton 3.0.0
+- requirements.txt中的所有依赖
+
+## 常见问题
+
+**检查环境**
+```bash
+python3 quick_check.py
+```
+
+**清理环境**
+```bash
+rm -rf llm_env activate_env.sh
+```
+
+**手动安装**
+```bash
+# 1. 系统依赖
+sudo apt-get install -y build-essential ninja-build cuda-toolkit-12-4
+
+# 2. 虚拟环境
+python3 -m venv llm_env
+source llm_env/bin/activate
+
+# 3. Python包
+pip install torch==2.4.0 --index-url https://download.pytorch.org/whl/cu124
+pip install triton==3.0.0
+pip install -r requirements.txt
+```
+
 
 ## git-协作方法
 我们使用github平台进行工作的同步，注意以下几点：

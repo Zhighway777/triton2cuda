@@ -96,10 +96,10 @@ class Model(torch.nn.Module):
         return solve(x, y)
 ```
 每个测试样例（接口的triton_code字符串）包括以下两部分内容：
+1. Triton Kernel实现
+2. Triton Kernel的Wrapper实现（输入输出一般为torch.Tensor），函数名为solve
 
-## Triton Kernel实现
-Triton Kernel的Wrapper实现（输入输出一般为torch.Tensor），函数名为solve
-LLM模型接口使用说明
+## LLM模型接口使用说明
 以智谱大模型为例，参赛者可以通过以下API调用的方式使用LLM：
 
 ```python

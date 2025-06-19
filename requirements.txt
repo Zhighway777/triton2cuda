@@ -1,4 +1,19 @@
-torch==2.4.0
+# ===========================================
+# Triton2CUDA 项目依赖配置
+# 匹配比赛环境要求
+# ===========================================
+
+# 核心深度学习框架 - 匹配比赛环境
+pip install torch==2.4.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+
 triton==3.0.0
-# zhipu AI
-zhipuai
+
+# 安装ninja -pytorch需要ninja来编译cuda扩展
+ninja>=1.10.0
+
+# LLM API客户端
+zhipuai>=2.1.0,<3.0.0
+
+# 开发和测试工具
+# pytest>=7.0.0
+# numpy>=1.21.0,<2.0.0
