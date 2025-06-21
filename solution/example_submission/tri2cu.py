@@ -1,4 +1,5 @@
 from zhipuai import ZhipuAI
+from openai import OpenAI
 
 # ATTENTION Please!!
 # Ensure all modification in tri2cu.py
@@ -393,8 +394,23 @@ def get_model_configs():
             "model": "glm-4-0520",
             "api_key": "NaN",
             "platform": "zhipuai",
-            "enabled": True,
+            "enabled": False,
             "description": "GLM-4 特定版本"
+        },
+        #install OpenAI SDK first: `pip3 install openai`
+        "claude-sonnet-4":{
+            "model": "anthropic/claude-sonnet-4",
+            "api_key": "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",
+            "platform": "openrouter",
+            "enabled": True,
+            "description" : "宇宙最强编程模型Clude-4"
+        },
+        "deepseek-R1":{
+            "model": "deepseek-reasoner",
+            "api_key": "sk-b471c7924f5c4d3c92d3a8fc12e0150b",
+            "platform": "deepseek",
+            "enabled": True,
+            "description" : "DeepSeek-R1-0528"
         }
     }
 
@@ -420,12 +436,24 @@ def create_api_client(platform, api_key):
     """
     if platform == "zhipuai":
         return ZhipuAI(api_key=api_key)
-    # elif platform == "claudeai":
-    #     return ClaudeAI(api_key=api_key)
+    elif platform == "openrouter":
+        # 为OpenRouter/Claude配置更长的超时时间
+        return OpenAI(
+            api_key=api_key,
+            base_url="https://openrouter.ai/api/v1",
+            timeout=120.0,  # 2分钟超时
+            max_retries=3   # 自动重试3次
+        )
+    elif platform == "deepseek":
+        return OpenAI(
+            api_key=api_key,
+            base_url="https://api.deepseek.com/v1",
+            timeout=60.0
+        )
     else:
         raise ValueError(f"不支持的平台: {platform}")
 
-def triton2cuda(triton_code, model_type="glm-4-plus", prompt_type="robust"):
+def triton2cuda(triton_code, model_type="deepseek-R1", prompt_type="simple"):
     """
     将Triton代码转换为CUDA代码
     
