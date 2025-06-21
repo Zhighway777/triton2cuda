@@ -6,3 +6,5 @@ python-env/
 *.zip
 __pycache__/
 *.pyc
+
+*_temp.py
