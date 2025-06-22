@@ -4,6 +4,8 @@ python-env/
 *-venv/
 *_env/
 *-env/
+*.zip
+*_temp.py
 
 # Python cache files
 __pycache__/

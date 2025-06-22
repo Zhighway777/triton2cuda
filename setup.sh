@@ -15,6 +15,7 @@ fi
 echo "📦 安装系统依赖..."
 sudo apt-get update -qq
 sudo apt-get install -y build-essential ninja-build
+sudo apt-get install zip
 
 # 安装CUDA工具包
 if ! command -v nvcc &> /dev/null; then
