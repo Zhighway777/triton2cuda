@@ -1,5 +1,5 @@
 from zhipuai import ZhipuAI
-from prompt import get_full_prompt, get_simple_prompt
+from prompt import get_full_prompt, get_simple_prompt, get_prompt_through_function
 
 # main_prompt = '''Convert the following triton code to equivalent CUDA code.
 # ```python
@@ -26,10 +26,11 @@ def triton2cuda(triton_code):
                 "content": "You are a helpful llm transpiler assistant.",
             },
             #you can use get_full_prompt or get_simple_prompt in prompt.py
-            {"role": "user", "content": get_full_prompt(triton_code)},
+            {"role": "user", "content": get_prompt_through_function(triton_code)},
         ],
     )
     content = response.choices[0].message.content
+    print(content)
     # 提取代码块中的内容
     if "```python" in content:
         start = content.find("```python") + len("```python")

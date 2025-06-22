@@ -3,3 +3,17 @@ my-env/
 python-env/
 *-venv/
 *_env/
+*-env/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# __init__.py files
+__init__.py
+
+
+# IDE settings
+.vscode/
