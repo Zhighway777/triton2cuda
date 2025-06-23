@@ -4,6 +4,7 @@ from openai import OpenAI
 # ATTENTION Please!!
 # Ensure all modification in tri2cu.py
 # 保证 submission.zip 仅有 tri2cu.py
+
 def get_prompt_through_function(triton_code):
     base_prompt = """
 你是专业的Triton到CUDA转换专家。请将以下Triton代码转换为功能等效的CUDA代码。
@@ -51,11 +52,15 @@ BLOCK_SIZE                     →  256, 512, 1024等2的幂
 - [ ] 确保计算结果正确
 
 ## 参考步骤
-1. 分析Triton代码的核心逻辑（通常为经典问题）
-2. 识别所有的tl.*操作并映射到CUDA等价操作
-3. 确定正确的线程索引和内存访问模式
-4. 实现边界检查和错误处理
-5. 验证数据类型和维度匹配
+1. 一步一步慢慢思考，如果过程置信度低不要随便生成
+2. 分析Triton代码的核心逻辑（通常为经典问题）
+3. 关注输入输出格式以及核心功能，包括核心功能实现优先
+4. 识别所有的tl.*操作并映射到CUDA等价操作
+5. 确定正确的线程索引和内存访问模式, 关键的并行模式
+6.分析需要的CUDA特性（shared memory, warp操作等） 设计CUDA kernel结构
+7. 实现边界检查和错误处理，验证数据类型和维度匹配
+8. 对于生成的结果, 你需要进行逻辑检查，保证该程序能够在 nvcc 上编译
+9. 如果你有不懂的地方并且该问题为经典问题，你可以根据输入和输出和实现的功能自行完善细节
 
 
 ## 参考标准示例
@@ -178,20 +183,7 @@ class ModelNew(nn.Module):
             # 处理多个参数的情况
             return self.cuda_module.your_wrapper_function(*args)
 ```
-## 特殊注意事项：
 
-1. **数据类型一致性**：确保CUDA kernel中的数据类型与PyTorch tensor一致
-2. **维度处理**：正确处理多维tensor，考虑stride和内存布局
-3. **Reduction操作**：如果涉及sum/max等reduction，使用proper shared memory pattern
-4. **命名规范**：kernel名称和wrapper函数名称要清晰且一致
-5. **性能考虑**：使用合适的block size（通常256或512）
-
-## 转换步骤：
-1. 分析Triton代码的核心逻辑
-2. 识别所有的tl.*操作并映射到CUDA等价操作
-3. 确定正确的线程索引和内存访问模式
-4. 实现边界检查和错误处理
-5. 验证数据类型和维度匹配
 
 请将以下Triton代码转换为CUDA代码：
 ```python
@@ -208,11 +200,25 @@ class ModelNew(nn.Module):
 5. ModelNew类必须正确处理forward方法的参数
 6. 确保所有CUDA操作都有适当的错误检查和边界检查
 
+## 特殊注意事项：
+1. **数据类型一致性**：确保CUDA kernel中的数据类型与PyTorch tensor一致
+2. **维度处理**：正确处理多维tensor，考虑stride和内存布局
+3. **Reduction操作**：如果涉及sum/max等reduction，使用proper shared memory pattern
+4. **命名规范**：kernel名称和wrapper函数名称要清晰且一致
+5. **性能考虑**：使用合适的block size（通常256或512）
+
+## 错误检查
+- [ ] 所有CUDA关键字使用是否正确？(`__global__`, `__device__`, `__shared__` 等)
+- [ ] 内存访问模式是否符合CUDA语法？
+- [ ] 线程索引计算是否正确？(`threadIdx`, `blockIdx`, `blockDim`, `gridDim`)
+- [ ] 是否正确处理了同步操作？(`__syncthreads()`)
+- [ ] 验证输入tensor维度和类型
+- [ ] 确保计算结果正确
+
 请严格按照上述模板和要求进行转换。
 """
     
     return base_prompt + triton_code + suffix
-
 
 def get_full_prompt(triton_code):
     """
@@ -663,7 +669,7 @@ def create_api_client(platform, api_key):
     else:
         raise ValueError(f"不支持的平台: {platform}")
 
-def triton2cuda(triton_code, model_type="claude-sonnet-4", prompt_type="function"):
+def triton2cuda(triton_code, model_type="glm-4-plus", prompt_type="function"):
     """
     将Triton代码转换为CUDA代码
     
