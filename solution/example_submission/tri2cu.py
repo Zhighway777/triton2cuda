@@ -453,7 +453,7 @@ def create_api_client(platform, api_key):
     else:
         raise ValueError(f"不支持的平台: {platform}")
 
-def triton2cuda(triton_code, model_type="deepseek-R1", prompt_type="simple"):
+def triton2cuda(triton_code, model_type="glm-4-plus", prompt_type="simple"):
     """
     将Triton代码转换为CUDA代码
     

@@ -4,16 +4,37 @@
 #include <device_launch_parameters.h>
 
 #include <cuda_runtime.h>
-__global__ void vector_add_kernel(const float* a, const float* b, float* out, int size) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < size) {
-        out[idx] = a[idx] + b[idx];
+__global__ void matrix_transpose_kernel(
+    const float* input_ptr, float* output_ptr,
+    int M, int N,
+    int stride_ir, int stride_ic,
+    int stride_or, int stride_oc,
+    int BLOCK_SIZE
+) {
+    int pid_m = blockIdx.x;  // Block index in M direction
+    int pid_n = blockIdx.y;  // Block index in N direction
+
+    int offs_m = pid_m * BLOCK_SIZE + threadIdx.x;
+    int offs_n = pid_n * BLOCK_SIZE + threadIdx.y;
+
+    if (offs_m < M && offs_n < N) {
+        int input_idx = offs_m * stride_ir + offs_n * stride_ic;
+        int output_idx = offs_n * stride_or + offs_m * stride_oc;
+        output_ptr[output_idx] = input_ptr[input_idx];
     }
 }
-    const int block_size = 256;
-    const int num_blocks = (size + block_size - 1) / block_size;
-    return out;
-}
+    int M = input.size(0);
+    int N = input.size(1);
+    dim3 grid((M + BLOCK_SIZE - 1) / BLOCK_SIZE, (N + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    dim3 block(BLOCK_SIZE, BLOCK_SIZE);
+    matrix_transpose_kernel<<<grid, block>>>(
+        M, N,
+        input.stride(0), input.stride(1),
+        output.stride(0), output.stride(1),
+        BLOCK_SIZE
+    );
+    return output;
+
 
 // 错误检查宏
 #define CHECK_CUDA(call) do { \
@@ -53,8 +74,8 @@ int main() {
     int blockSize = 256;
     int numBlocks = (N + blockSize - 1) / blockSize;
     
-    // 启动kernel: vector_add_kernel
-    vector_add_kernel<<<numBlocks, blockSize>>>(d_a, d_b, d_result, N);
+    // 启动kernel: matrix_transpose_kernel
+    matrix_transpose_kernel<<<numBlocks, blockSize>>>(d_a, d_b, d_result, N);
     CHECK_CUDA(cudaDeviceSynchronize());
     
     // 复制结果回主机
