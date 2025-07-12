@@ -3,9 +3,7 @@ import torch
 import triton
 import triton.language as tl
 
-
-
-
+torch.manual_seed(46)
 
 @triton.jit
 def _layer_norm_fwd_fused(
@@ -55,3 +53,18 @@ def _layer_norm_fwd_fused(
         y = x_hat * w + b
         # Write output
         tl.store(Y + cols, y, mask=mask)
+
+    return
+
+def solve(x: torch.Tensor):
+    output = torch.empty_like(x)
+    assert x.is_cuda and output.is_cuda
+    assert x.dtype == torch.float32 and output.dtype == torch.float32
+    N = x.shape[1]
+
+class Model(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x: torch.Tensor):
+        return solve(x)
