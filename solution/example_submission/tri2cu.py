@@ -5,6 +5,222 @@ from openai import OpenAI
 # Ensure all modification in tri2cu.py
 # 保证 submission.zip 仅有 tri2cu.py
 ## next step：针对这项任务进行Agent搭建，可以经过多轮的迭代测试也checkpoint检查来发现问题，并进行修复。来解决编译正确性和运行时错误。
+
+def get_prompt_through_function(triton_code):
+    base_prompt = """
+你是专业的Triton到CUDA转换专家。请将以下Triton代码转换为功能等效的CUDA代码。
+
+## 严格要求（必须遵守）：
+### 1. 编译要求
+- 必须包含所有必要的头文件：#include <torch/extension.h>, #include <cuda_runtime.h>
+- 所有CUDA kernel必须使用__global__修饰符
+- 所有device函数必须使用__device__修饰符
+- 变量声明必须符合C++语法
+- 避免使用未定义的变量或函数
+### 2. 内存安全
+- 所有数组访问必须进行边界检查：if (idx < size)
+- 使用正确的数据类型指针：float*, int*, double*等
+- 确保shared memory声明正确：__shared__ float sdata[BLOCK_SIZE]
+- 避免内存越界访问
+### 3. CUDA语法规范
+- 线程索引计算：int idx = blockIdx.x * blockDim.x + threadIdx.x;
+- Grid和Block尺寸计算：dim3 grid((size + block_size - 1) / block_size);
+- 同步操作：__syncthreads()（仅在需要时使用）
+- 原子操作：atomicAdd, atomicMax等（仅在需要时使用）
+### 4. PyTorch集成
+- 使用torch::Tensor作为参数类型
+- 正确获取tensor属性：input.numel(), input.size(0)等
+- 正确的数据指针获取：input.data_ptr<float>()
+- 创建输出tensor：torch::empty_like(input)或torch::zeros_like(input)
+### 5. 关键映射规则（严格遵守）：
+```
+Triton                          →  CUDA
+tl.program_id(axis=0)          →  blockIdx.x
+tl.program_id(axis=1)          →  blockIdx.y
+tl.arange(0, BLOCK_SIZE)       →  threadIdx.x + blockIdx.x * blockDim.x
+tl.load(ptr + offsets, mask)   →  if (idx < size) value = ptr[idx]
+tl.store(ptr + offsets, val, mask) → if (idx < size) ptr[idx] = value
+tl.sum(x, axis=0)              →  使用reduction操作或shared memory
+tl.max(x, axis=0)              →  使用reduction操作或shared memory
+BLOCK_SIZE                     →  256, 512, 1024等2的幂
+```
+### 6. 错误检查
+- [ ] 所有CUDA关键字使用是否正确？(`__global__`, `__device__`, `__shared__` 等)
+- [ ] 内存访问模式是否符合CUDA语法？
+- [ ] 线程索引计算是否正确？(`threadIdx`, `blockIdx`, `blockDim`, `gridDim`)
+- [ ] 是否正确处理了同步操作？(`__syncthreads()`)
+- [ ] 验证输入tensor维度和类型
+- [ ] 确保计算结果正确
+
+## 参考步骤
+1. 一步一步慢慢思考，如果过程置信度低不要随便生成
+2. 分析Triton代码的核心逻辑（通常为经典问题）
+3. 关注输入输出格式以及核心功能，包括核心功能实现优先
+4. 识别所有的tl.*操作并映射到CUDA等价操作
+5. 确定正确的线程索引和内存访问模式, 关键的并行模式
+6.分析需要的CUDA特性（shared memory, warp操作等） 设计CUDA kernel结构
+7. 实现边界检查和错误处理，验证数据类型和维度匹配
+8. 对于生成的结果, 你需要进行逻辑检查，保证该程序能够在 nvcc 上编译
+9. 如果你有不懂的地方并且该问题为经典问题，你可以根据输入和输出和实现的功能自行完善细节
+
+
+## 参考标准示例
+### 输入示例
+```python
+import torch
+import triton
+import triton.language as tl
+
+torch.manual_seed(46)
+
+@triton.jit
+def add_kernel(x_ptr,
+               y_ptr,
+               output_ptr,
+               n_elements,
+               BLOCK_SIZE: tl.constexpr,
+               ):
+    pid = tl.program_id(axis=0)
+    block_start = pid * BLOCK_SIZE
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)
+    mask = offsets < n_elements
+    x = tl.load(x_ptr + offsets, mask=mask)
+    y = tl.load(y_ptr + offsets, mask=mask)
+    output = x + y
+    tl.store(output_ptr + offsets, output, mask=mask)
+
+def solve(x: torch.Tensor, y: torch.Tensor):
+    output = torch.empty_like(x)
+    assert x.is_cuda and y.is_cuda and output.is_cuda
+    assert x.dtype == torch.float32 and y.dtype == torch.float32 and output.dtype == torch.float32
+    n_elements = output.numel()
+    grid = lambda meta: (triton.cdiv(n_elements, meta['BLOCK_SIZE']), )
+    add_kernel[grid](x, y, output, n_elements, BLOCK_SIZE=1024)
+    return output
+
+class Model(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x: torch.Tensor, y: torch.Tensor):
+        return solve(x, y)
+```
+### 输出示例
+```python
+import torch
+import torch.nn as nn
+from torch.utils.cpp_extension import load_inline
+import os
+os.environ["TORCH_USE_CUDA_DSA"] = "1"
+
+cuda_source = \"\"\"
+#include <torch/extension.h>
+#include <cuda_runtime.h>
+
+__global__ void your_kernel_name(
+    const float* input_ptr,
+    float* output_ptr,
+    int size
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    if (idx < size) {
+        // 在这里实现核心逻辑
+        // 确保所有计算都有边界检查
+        output_ptr[idx] = input_ptr[idx]; // 示例操作
+    }
+}
+
+torch::Tensor your_wrapper_function(torch::Tensor input) {
+    // 获取输入尺寸
+    auto size = input.numel();
+    
+    // 创建输出tensor
+    auto output = torch::empty_like(input);
+    
+    // 配置kernel启动参数
+    const int block_size = 256;
+    const int num_blocks = (size + block_size - 1) / block_size;
+    
+    // 启动kernel
+    your_kernel_name<<<num_blocks, block_size>>>(
+        input.data_ptr<float>(),
+        output.data_ptr<float>(),
+        size
+    );
+    
+    // 等待kernel完成（可选）
+    cudaDeviceSynchronize();
+    
+    return output;
+}
+\"\"\"
+
+cpp_source = \"\"\"
+torch::Tensor your_wrapper_function(torch::Tensor input);
+\"\"\"
+
+# 编译模块
+module = load_inline(
+    name="cuda_module",
+    cpp_sources=cpp_source,
+    cuda_sources=cuda_source,
+    functions=["your_wrapper_function"],
+    verbose=True,
+    extra_cflags=["-O3"],
+    extra_cuda_cflags=["-O3"]
+)
+
+class ModelNew(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.cuda_module = module
+    
+        def forward(self, *args):
+        # 确保参数处理正确
+        if len(args) == 1:
+            return self.cuda_module.your_wrapper_function(args[0])
+        else:
+            # 处理多个参数的情况
+            return self.cuda_module.your_wrapper_function(*args)
+```
+
+
+请将以下Triton代码转换为CUDA代码：
+```python
+
+"""
+
+    suffix = """
+```
+## 输出要求：
+1. 直接输出完整的Python代码，不要任何解释文字
+2. 代码必须能够通过nvcc编译
+3. 数值结果必须与原Triton代码一致
+4. 包含所有必要的import和环境设置
+5. ModelNew类必须正确处理forward方法的参数
+6. 确保所有CUDA操作都有适当的错误检查和边界检查
+
+## 特殊注意事项：
+1. **数据类型一致性**：确保CUDA kernel中的数据类型与PyTorch tensor一致
+2. **维度处理**：正确处理多维tensor，考虑stride和内存布局
+3. **Reduction操作**：如果涉及sum/max等reduction，使用proper shared memory pattern
+4. **命名规范**：kernel名称和wrapper函数名称要清晰且一致
+5. **性能考虑**：使用合适的block size（通常256或512）
+
+## 错误检查
+- [ ] 所有CUDA关键字使用是否正确？(`__global__`, `__device__`, `__shared__` 等)
+- [ ] 内存访问模式是否符合CUDA语法？
+- [ ] 线程索引计算是否正确？(`threadIdx`, `blockIdx`, `blockDim`, `gridDim`)
+- [ ] 是否正确处理了同步操作？(`__syncthreads()`)
+- [ ] 验证输入tensor维度和类型
+- [ ] 确保计算结果正确
+
+请严格按照上述模板和要求进行转换。
+"""
+    
+    return base_prompt + triton_code + suffix
+
 def get_full_prompt(triton_code):
     """
     生成严格的prompt，专门避免编译和运行时错误
@@ -128,13 +344,13 @@ class ModelNew(nn.Module):
         super().__init__()
         self.cuda_module = module
     
-          def forward(self, *args):
-         # 确保参数处理正确
-         if len(args) == 1:
-             return self.cuda_module.your_wrapper_function(args[0])
-         else:
-             # 处理多个参数的情况
-             return self.cuda_module.your_wrapper_function(*args)
+        def forward(self, *args):
+        # 确保参数处理正确
+        if len(args) == 1:
+            return self.cuda_module.your_wrapper_function(args[0])
+        else:
+            # 处理多个参数的情况
+            return self.cuda_module.your_wrapper_function(*args)
 ```
 
 ## 特殊注意事项：
@@ -487,6 +703,8 @@ def triton2cuda(triton_code, model_type="deepseek-R1", prompt_type="full"):
         prompt_content = get_full_prompt(triton_code)
     elif prompt_type == "simple":
         prompt_content = get_simple_prompt(triton_code)
+    elif prompt_type == "function":
+        prompt_content = get_prompt_through_function(triton_code)
     else:
         raise ValueError(f"不支持的prompt类型: {prompt_type}，可选: 'robust', 'full', 'simple'")
     

@@ -14,7 +14,9 @@ A tool based LLM to translate Triton to CUDA
 ```bash
 ./activate_env.sh
 ```
-
+### 3. 提取cuda程序的方法：
+1. 首先运行prompt,生成py的包裹文件，在solution/data/cuda下
+2. 运行 python3 extract_cuda.py solution/data/cuda/output_cuda -o extracted_cuda
 ## 环境要求
 
 - Ubuntu 22.04+
