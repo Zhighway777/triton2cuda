@@ -5,6 +5,9 @@ import torch
 import importlib.util
 import sys
 import glob
+import argparse
+import requests
+import traceback
 
 # 修复路径问题：确保路径始终正确
 current_file_dir = os.path.dirname(os.path.abspath(__file__))  # eval目录
@@ -21,6 +24,95 @@ sys.path.append(os.path.join(folder_path, "data", "ref"))
 TEST_NN_MODEL_NAME = 'ModelNew'
 
 from tri2cu import triton2cuda
+
+class NetworkMonitor:
+    """API连通性监控类"""
+    
+    @staticmethod
+    def check_api_endpoints():
+        """检查API端点可用性"""
+        endpoints = {
+            "智谱AI": "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+            "OpenRouter": "https://openrouter.ai/api/v1/chat/completions",
+            "DeepSeek": "https://api.deepseek.com/v1/chat/completions"
+        }
+        
+        results = {}
+        for name, url in endpoints.items():
+            try:
+                # 只检查端点是否可达，不发送实际请求
+                response = requests.head(url, timeout=10)
+                results[name] = {
+                    "available": response.status_code != 404,
+                    "status_code": response.status_code,
+                    "response_time": response.elapsed.total_seconds()
+                }
+            except Exception as e:
+                results[name] = {
+                    "available": False,
+                    "error": str(e)
+                }
+        
+        return results
+
+def classify_api_error(error_message):
+    """分类API错误类型"""
+    error_msg_lower = error_message.lower()
+    
+    # API连接超时
+    if any(keyword in error_msg_lower for keyword in ["timeout", "timed out"]):
+        return "TimeoutError"
+    
+    # 连接错误
+    if any(keyword in error_msg_lower for keyword in ["connection", "unreachable", "dns"]):
+        return "ConnectionError"
+    
+    # API认证错误
+    if any(keyword in error_msg_lower for keyword in ["unauthorized", "authentication", "api key", "forbidden"]):
+        return "AuthenticationError"
+    
+    # 速率限制
+    if any(keyword in error_msg_lower for keyword in ["rate limit", "quota", "too many requests"]):
+        return "RateLimitError"
+    
+    # API服务器错误
+    if any(keyword in error_msg_lower for keyword in ["500", "502", "503", "504", "server error"]):
+        return "ServerError"
+    
+    # SSL/TLS错误
+    if any(keyword in error_msg_lower for keyword in ["ssl", "certificate", "tls"]):
+        return "SSLError"
+    
+    # 一般API连接错误
+    if any(keyword in error_msg_lower for keyword in ["network", "socket", "http"]):
+        return "NetworkError"
+    
+    return "UnknownError"
+
+def test_api_connectivity():
+    """测试API端点可用性"""
+    print("=== API连通性测试 ===")
+    
+    # API端点测试
+    print("API端点测试:")
+    api_status = NetworkMonitor.check_api_endpoints()
+    
+    for name, status in api_status.items():
+        if status.get("available", False):
+            response_time = status.get("response_time", 0)
+            print(f"  {name}: ✓ 可用 (响应时间: {response_time:.2f}s)")
+        else:
+            error = status.get("error", "不可用")
+            print(f"  {name}: ✗ 不可用 ({error})")
+    
+    available_apis = [name for name, status in api_status.items() if status.get("available", False)]
+    
+    if available_apis:
+        print(f"\n可用API: {', '.join(available_apis)}")
+        return True
+    else:
+        print("\n❌ 所有API都不可用")
+        return False
 
 def check_file_exists(file_path, description="文件"):
     """检查文件是否存在，如果不存在则提供详细的调试信息"""
@@ -221,7 +313,16 @@ def eval_single_file(file_name, verbose=False):
         except Exception as e:
             error_msg = f"转换失败: {str(e)}"
             error_messages.append(error_msg)
-            print(f"  错误: {error_msg}")
+            
+            # 分类API错误类型
+            api_error_type = classify_api_error(str(e))
+            if api_error_type in ["TimeoutError", "ConnectionError", "AuthenticationError", "NetworkError"]:
+                print(f"  API错误 [{api_error_type}]: {error_msg}")
+                if verbose:
+                    print("  💡 建议: 运行 --network 参数测试API端点可用性")
+            else:
+                print(f"  错误: {error_msg}")
+            
             return False, error_messages
         
         # 3. 获取参考模型和输入数据
@@ -390,6 +491,7 @@ def eval_all_files(verbose=False):
     
     if failed_files:
         print("\n失败的文件:")
+        api_error_files = []
         for file_name in failed_files:
             print(f"  ✗ {file_name}")
             if verbose and file_name in all_errors:
@@ -397,6 +499,25 @@ def eval_all_files(verbose=False):
                     print(f"    - {error}")
                 if len(all_errors[file_name]) > 3:
                     print(f"    - ... 还有 {len(all_errors[file_name]) - 3} 个错误")
+            
+            # 检查是否有API相关错误
+            if file_name in all_errors:
+                for error in all_errors[file_name]:
+                    error_type = classify_api_error(error)
+                    if error_type in ["TimeoutError", "ConnectionError", "AuthenticationError", "NetworkError"]:
+                        api_error_files.append(file_name)
+                        break
+        
+        # 提供API相关错误建议
+        if api_error_files:
+            print(f"\n⚠️ 检测到 {len(api_error_files)} 个文件可能存在API相关问题:")
+            for file_name in api_error_files:
+                print(f"  - {file_name}")
+            print("\n💡 API相关错误解决建议:")
+            print("1. 运行 --network 参数测试API端点可用性")
+            print("2. 检查API密钥是否正确配置")
+            print("3. 确认API服务是否正常运行")
+            print("4. 尝试切换网络环境或使用代理")
     
     return len(failed_files) == 0
 
@@ -513,25 +634,138 @@ def eval_golden():
         traceback.print_exc()
         return False
 
+def show_usage():
+    """显示使用说明"""
+    print("Triton到CUDA转换评测系统使用说明:")
+    print("")
+    print("基本用法:")
+    print("  python eval.py --file vecadd.py        # 评测单个文件")
+    print("  python eval.py --all                   # 评测所有文件")
+    print("  python eval.py --all --verbose         # 详细模式评测所有文件")
+    print("")
+    print("特殊功能:")
+    print("  python eval.py --network              # 测试API端点可用性")
+    print("  python eval.py --golden               # Golden标准评测")
+    print("  python eval.py --simple               # 简单vecadd评测")
+    print("")
+    print("API连通性测试:")
+    print("  当遇到转换失败时，可以先运行 --network 测试API是否可用")
+    print("  系统会自动检测API相关错误并提供解决建议")
+    print("")
+
 def cleanup():
     """恢复原始工作目录"""
     os.chdir(original_cwd)
 
 if __name__ == "__main__":
     try:
-        # # 评测所有文件（详细模式）
-        eval_all_files(verbose=True)
+        parser = argparse.ArgumentParser(description="Triton到CUDA转换评测系统")
+        parser.add_argument("--file", type=str, help="评测单个文件")
+        parser.add_argument("--all", action="store_true", help="评测所有文件")
+        parser.add_argument("--verbose", action="store_true", help="详细输出")
+        parser.add_argument("--network", action="store_true", help="测试API端点可用性")
+        parser.add_argument("--golden", action="store_true", help="Golden标准评测")
+        parser.add_argument("--simple", action="store_true", help="简单vecadd评测")
+        parser.add_argument("--help-usage", action="store_true", help="显示详细使用说明")
         
-        # Golden标准评测
-        print("\n" + "="*50)
-        eval_golden()
+        args = parser.parse_args()
         
-        # 可选：只评测特定文件
-        # eval_single_file("flashatt.py", verbose=True)
+        # 检查是否需要安装requests库
+        try:
+            import requests
+        except ImportError:
+            print("❌ 需要安装requests库")
+            print("请运行: pip install requests")
+            exit(1)
         
-        # 原始函数保留兼容性
-        # eval_simple()
+        if args.help_usage:
+            # 显示使用说明
+            show_usage()
+            exit(0)
         
+        elif args.network:
+            # API连通性测试
+            success = test_api_connectivity()
+            if not success:
+                print("\n建议:")
+                print("1. 验证API密钥配置")
+                print("2. 确认防火墙设置")
+                print("3. 尝试使用VPN或代理")
+                print("4. 检查API服务是否正常运行")
+            exit(0)
+        
+        elif args.file:
+            # 单文件评测
+            success, error_messages = eval_single_file(args.file, args.verbose)
+            if success:
+                print(f"\n✅ {args.file} 评测通过")
+            else:
+                print(f"\n❌ {args.file} 评测失败")
+                if error_messages:
+                    # 检查是否有API相关错误
+                    api_errors = []
+                    for error in error_messages:
+                        error_type = classify_api_error(error)
+                        if error_type in ["TimeoutError", "ConnectionError", "AuthenticationError", "NetworkError"]:
+                            api_errors.append(error_type)
+                    
+                    if api_errors:
+                        print("\n💡 API相关错误解决建议:")
+                        print("1. 运行 --network 参数测试API端点可用性")
+                        print("2. 检查API密钥是否正确配置")
+                        print("3. 确认API服务是否正常运行")
+                        print("4. 尝试切换网络环境或使用代理")
+        
+        elif args.all:
+            # 批量评测
+            success = eval_all_files(args.verbose)
+            if success:
+                print("\n🎉 所有文件评测通过!")
+            else:
+                print("\n❌ 部分文件评测失败")
+        
+        elif args.golden:
+            # Golden标准评测
+            success = eval_golden()
+            if success:
+                print("\n🎉 Golden标准评测通过!")
+            else:
+                print("\n❌ Golden标准评测失败")
+        
+        elif args.simple:
+            # 简单vecadd评测
+            success = eval_simple()
+            if success:
+                print("\n✅ 简单vecadd评测通过")
+            else:
+                print("\n❌ 简单vecadd评测失败")
+        
+        else:
+            # 默认评测单个文件
+            success, error_messages = eval_single_file("mat_transpose.py", verbose=True)
+            if success:
+                print("\n✅ 默认评测通过")
+            else:
+                print("\n❌ 默认评测失败")
+                if error_messages:
+                    # 检查是否有API相关错误
+                    api_errors = []
+                    for error in error_messages:
+                        error_type = classify_api_error(error)
+                        if error_type in ["TimeoutError", "ConnectionError", "AuthenticationError", "NetworkError"]:
+                            api_errors.append(error_type)
+                    
+                    if api_errors:
+                        print("\n💡 API相关错误解决建议:")
+                        print("1. 运行 --network 参数测试API端点可用性")
+                        print("2. 检查API密钥是否正确配置")
+                        print("3. 确认API服务是否正常运行")
+                        print("4. 尝试切换网络环境或使用代理")
+        
+    except Exception as e:
+        print(f"评测过程发生异常: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
         # 确保恢复原始工作目录
         cleanup()

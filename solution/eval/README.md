@@ -27,3 +27,49 @@
 > python eval/eval_enhanced.py --all --verbose
 
 测试结果会以report的形式保存在debug_output文件夹下
+
+3. eval.py新增功能
+
+命令行参数:
+```python
+python eval.py --file vecadd.py        # 评测单个文件
+python eval.py --all                   # 评测所有文件
+python eval.py --all --verbose         # 详细模式评测所有文件
+python eval.py --network              # 测试API端点可用性
+python eval.py --golden               # Golden标准评测
+python eval.py --simple               # 简单vecadd评测
+```
+
+API连通性测试功能:
+- 自动检测API相关错误并分类
+- 提供API端点可用性检查
+- 支持智谱AI、OpenRouter、DeepSeek等多个API
+- 当转换失败时可先运行--network测试API是否可用
+
+4. eval_enhanced.py增强功能
+
+主要特性:
+- 多模型和prompt策略自动尝试
+- 详细的API调用监控和记录
+- 完整的错误分类和诊断
+- 评分系统(编译1分+准确性9分=总分10分)
+- 生成详细的评测报告
+
+命令行参数:
+```python
+python eval_enhanced.py --file vecadd.py --verbose    # 评测单个文件
+python eval_enhanced.py --all --verbose               # 评测所有文件
+python eval_enhanced.py --network                     # 测试API端点可用性
+```
+
+评测报告包含:
+- 总体统计和成功率
+- 错误类型分析
+- API调用详情和成功率
+- 每个文件的详细测试结果
+- 转换过程和API调用历史
+
+注意事项:
+1. API相关错误时使用--network参数测试连通性
+2. 详细模式(--verbose)提供更多调试信息
+3. 所有调试输出和报告保存在debug_output目录
