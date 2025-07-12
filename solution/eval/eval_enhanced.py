@@ -9,13 +9,119 @@ import argparse
 from typing import Tuple, List, Dict, Any
 from enum import Enum
 import traceback
+import requests
+from datetime import datetime
+import json
 
 # 错误类型枚举
 class ErrorType(Enum):
     RUNTIME_ERROR = "RuntimeError"
     COMPILATION_ERROR = "CompilationError"
     OUTPUT_MISMATCH_ERROR = "OutputMismatchError"
+    NETWORK_ERROR = "NetworkError"        # 新增：API连接相关错误
+    API_ERROR = "APIError"               # 新增：API调用错误
     SUCCESS = "Success"
+
+class APICallMonitor:
+    """API调用监控类"""
+    
+    def __init__(self):
+        self.call_history = []
+        self.current_call = None
+    
+    def start_call(self, model_type: str, prompt_type: str, triton_code_length: int):
+        """开始监控API调用"""
+        self.current_call = {
+            "model_type": model_type,
+            "prompt_type": prompt_type,
+            "triton_code_length": triton_code_length,
+            "start_time": datetime.now(),
+            "start_timestamp": time.time(),
+            "request_details": {},
+            "response_details": {},
+            "error_details": {},
+            "success": False,
+            "duration": 0
+        }
+    
+    def record_request(self, **kwargs):
+        """记录请求详情"""
+        if self.current_call:
+            self.current_call["request_details"].update(kwargs)
+    
+    def record_response(self, **kwargs):
+        """记录响应详情"""
+        if self.current_call:
+            self.current_call["response_details"].update(kwargs)
+    
+    def record_error(self, error_type: str, error_message: str, full_traceback: str = None):
+        """记录错误详情"""
+        if self.current_call:
+            self.current_call["error_details"] = {
+                "error_type": error_type,
+                "error_message": error_message,
+                "full_traceback": full_traceback,
+                "timestamp": datetime.now().isoformat()
+            }
+    
+    def end_call(self, success: bool, response_content: str = None):
+        """结束API调用监控"""
+        if self.current_call:
+            self.current_call["success"] = success
+            self.current_call["duration"] = time.time() - self.current_call["start_timestamp"]
+            self.current_call["end_time"] = datetime.now()
+            
+            if response_content:
+                self.current_call["response_details"]["content_length"] = len(response_content)
+                self.current_call["response_details"]["has_code_block"] = "```" in response_content
+            
+            self.call_history.append(self.current_call.copy())
+            self.current_call = None
+    
+    def get_summary(self):
+        """获取调用摘要"""
+        total_calls = len(self.call_history)
+        successful_calls = sum(1 for call in self.call_history if call["success"])
+        total_duration = sum(call["duration"] for call in self.call_history)
+        
+        return {
+            "total_calls": total_calls,
+            "successful_calls": successful_calls,
+            "failed_calls": total_calls - successful_calls,
+            "total_duration": total_duration,
+            "average_duration": total_duration / total_calls if total_calls > 0 else 0,
+            "success_rate": successful_calls / total_calls if total_calls > 0 else 0
+        }
+
+class NetworkMonitor:
+    """API连通性监控类"""
+    
+    @staticmethod
+    def check_api_endpoints():
+        """检查API端点可用性"""
+        endpoints = {
+            "智谱AI": "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+            "OpenRouter": "https://openrouter.ai/api/v1/chat/completions",
+            "DeepSeek": "https://api.deepseek.com/v1/chat/completions"
+        }
+        
+        results = {}
+        for name, url in endpoints.items():
+            try:
+                # 只检查端点是否可达，不发送实际请求
+                response = requests.head(url, timeout=10)
+                results[name] = {
+                    "available": response.status_code != 404,
+                    "status_code": response.status_code,
+                    "response_time": response.elapsed.total_seconds()
+                }
+            except Exception as e:
+                results[name] = {
+                    "available": False,
+                    "error": str(e)
+                }
+        
+        return results
 
 class TestResult:
     def __init__(self, file_name: str):
@@ -28,6 +134,8 @@ class TestResult:
         self.test_details = []      # 每个测试用例的详细信息
         self.cuda_code = ""         # 生成的CUDA代码
         self.compilation_output = ""  # 编译器输出
+        self.conversion_details = []  # 转换过程详情
+        self.api_call_history = []  # API调用历史
         
     def set_error(self, error_type: ErrorType, message: str):
         self.error_type = error_type
@@ -244,6 +352,267 @@ def run_cuda_code_test(cuda_code: str, input_tensors: List[List[torch.Tensor]], 
     except Exception as e:
         raise RuntimeError(f"CUDA代码执行失败: {str(e)}")
 
+def enhanced_triton2cuda_with_monitoring(triton_code, file_name="unknown"):
+    """增强版triton2cuda调用，包含详细的API调用监控"""
+    
+    monitor = APICallMonitor()
+    
+    # 1. API端点检查
+    print("  正在检查API端点...")
+    api_status = NetworkMonitor.check_api_endpoints()
+    available_apis = [name for name, status in api_status.items() if status.get("available", False)]
+    
+    if not available_apis:
+        error_msg = "所有API端点都不可用:\n"
+        for name, status in api_status.items():
+            error_msg += f"  - {name}: {status.get('error', '不可用')}\n"
+        raise Exception(error_msg)
+    
+    print(f"  可用的API: {', '.join(available_apis)}")
+    
+    # 2. 尝试不同的模型和prompt策略
+    models_to_try = [
+        ("deepseek-R1", "robust"),
+        ("claude-sonnet-4", "full"),
+        ("glm-4-plus", "function"),
+        ("deepseek-R1", "simple")
+    ]
+    
+    last_error = None
+    attempt_details = []
+    
+    for model_type, prompt_type in models_to_try:
+        # 开始监控这次API调用
+        monitor.start_call(model_type, prompt_type, len(triton_code))
+        
+        try:
+            print(f"  尝试使用模型: {model_type} (prompt: {prompt_type})")
+            
+            # 记录请求详情
+            monitor.record_request(
+                model=model_type,
+                prompt_strategy=prompt_type,
+                input_code_length=len(triton_code),
+                timestamp=datetime.now().isoformat()
+            )
+            
+            # 调用原始的triton2cuda函数，但我们需要包装它来捕获更多信息
+            cuda_code = monitored_triton2cuda_call(triton_code, model_type, prompt_type, monitor)
+            
+            # 记录成功的响应
+            monitor.record_response(
+                api_call_end=datetime.now().isoformat(),
+                response_type="text",
+                contains_python_code="```python" in cuda_code if cuda_code else False,
+                contains_any_code="```" in cuda_code if cuda_code else False
+            )
+            
+            attempt_details.append({
+                "model": model_type,
+                "prompt": prompt_type,
+                "success": True,
+                "duration": monitor.current_call["duration"] if monitor.current_call else 0,
+                "code_length": len(cuda_code) if cuda_code else 0
+            })
+            
+            # 检查返回的代码是否为空
+            if not cuda_code or not cuda_code.strip():
+                print(f"    警告: 返回的代码为空，尝试下一个模型")
+                last_error = f"模型 {model_type} 返回空代码"
+                monitor.record_error("EmptyResponse", last_error)
+                monitor.end_call(False, cuda_code)
+                continue
+            
+            print(f"    成功! 代码长度: {len(cuda_code)} 字符")
+            
+            # 结束成功的监控
+            monitor.end_call(True, cuda_code)
+            
+            # 保存成功的转换记录
+            save_conversion_log_with_api_details(file_name, model_type, prompt_type, cuda_code, attempt_details, monitor)
+            
+            return cuda_code, attempt_details, monitor.call_history
+            
+        except Exception as e:
+            error_msg = str(e)
+            
+            # 分析错误类型
+            error_type = classify_api_error(error_msg)
+            monitor.record_error(error_type, error_msg, traceback.format_exc())
+            
+            attempt_details.append({
+                "model": model_type,
+                "prompt": prompt_type,
+                "success": False,
+                "duration": time.time() - monitor.current_call["start_timestamp"] if monitor.current_call else 0,
+                "error": error_msg,
+                "error_type": error_type
+            })
+            
+            print(f"    失败: {error_msg}")
+            last_error = error_msg
+            
+            # 结束失败的监控
+            monitor.end_call(False)
+            
+            # 检查是否是API连接相关错误
+            if error_type in ["NetworkError", "TimeoutError", "ConnectionError"]:
+                print(f"    检测到API连接错误，等待5秒后重试...")
+                time.sleep(5)
+            
+            continue
+    
+    # 所有尝试都失败了
+    error_summary = f"所有模型都失败了。最后错误: {last_error}\n"
+    error_summary += "尝试详情:\n"
+    for attempt in attempt_details:
+        if attempt["success"]:
+            error_summary += f"  ✓ {attempt['model']}: 成功 ({attempt['duration']:.2f}s)\n"
+        else:
+            error_summary += f"  ✗ {attempt['model']}: {attempt.get('error_type', 'Unknown')} - {attempt['error']}\n"
+    
+    # 添加API调用统计
+    summary = monitor.get_summary()
+    error_summary += f"\nAPI调用统计:\n"
+    error_summary += f"  总调用次数: {summary['total_calls']}\n"
+    error_summary += f"  成功次数: {summary['successful_calls']}\n"
+    error_summary += f"  失败次数: {summary['failed_calls']}\n"
+    error_summary += f"  总耗时: {summary['total_duration']:.2f}秒\n"
+    error_summary += f"  平均耗时: {summary['average_duration']:.2f}秒\n"
+    
+    raise Exception(error_summary)
+
+def monitored_triton2cuda_call(triton_code, model_type, prompt_type, monitor):
+    """包装的triton2cuda调用，用于记录更详细的信息"""
+    
+    try:
+        # 记录更多请求参数
+        monitor.record_request(
+            api_call_start=datetime.now().isoformat(),
+            temperature=0.1,
+            max_tokens=4000
+        )
+        
+        # 调用实际的triton2cuda函数
+        result = triton2cuda(triton_code, model_type=model_type, prompt_type=prompt_type)
+        
+        # 记录响应信息
+        monitor.record_response(
+            api_call_end=datetime.now().isoformat(),
+            response_type="text",
+            contains_python_code="```python" in result if result else False,
+            contains_any_code="```" in result if result else False
+        )
+        
+        return result
+        
+    except Exception as e:
+        # 记录API调用失败的详细信息
+        error_type = classify_api_error(str(e))
+        monitor.record_error(error_type, str(e), traceback.format_exc())
+        raise
+
+def classify_api_error(error_message):
+    """分类API错误类型"""
+    error_msg_lower = error_message.lower()
+    
+    # API连接超时
+    if any(keyword in error_msg_lower for keyword in ["timeout", "timed out"]):
+        return "TimeoutError"
+    
+    # 连接错误
+    if any(keyword in error_msg_lower for keyword in ["connection", "unreachable", "dns"]):
+        return "ConnectionError"
+    
+    # API认证错误
+    if any(keyword in error_msg_lower for keyword in ["unauthorized", "authentication", "api key", "forbidden"]):
+        return "AuthenticationError"
+    
+    # 速率限制
+    if any(keyword in error_msg_lower for keyword in ["rate limit", "quota", "too many requests"]):
+        return "RateLimitError"
+    
+    # API服务器错误
+    if any(keyword in error_msg_lower for keyword in ["500", "502", "503", "504", "server error"]):
+        return "ServerError"
+    
+    # SSL/TLS错误
+    if any(keyword in error_msg_lower for keyword in ["ssl", "certificate", "tls"]):
+        return "SSLError"
+    
+    # 一般API连接错误
+    if any(keyword in error_msg_lower for keyword in ["network", "socket", "http"]):
+        return "NetworkError"
+    
+    return "UnknownError"
+
+def save_conversion_log_with_api_details(file_name, model_type, prompt_type, cuda_code, attempts, monitor):
+    """保存转换日志，包含API调用详情"""
+    debug_dir = os.path.join(folder_path, "debug_output")
+    os.makedirs(debug_dir, exist_ok=True)
+    
+    # 保存详细的转换日志
+    log_file = os.path.join(debug_dir, f"{file_name}_conversion_log.txt")
+    with open(log_file, "w", encoding="utf-8") as f:
+        f.write(f"转换日志 - {file_name}\n")
+        f.write(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"成功模型: {model_type}\n")
+        f.write(f"成功prompt: {prompt_type}\n")
+        f.write(f"生成代码长度: {len(cuda_code)}\n\n")
+        
+        # API调用统计
+        summary = monitor.get_summary()
+        f.write("API调用统计:\n")
+        f.write(f"  总调用次数: {summary['total_calls']}\n")
+        f.write(f"  成功次数: {summary['successful_calls']}\n")
+        f.write(f"  失败次数: {summary['failed_calls']}\n")
+        f.write(f"  总耗时: {summary['total_duration']:.2f}秒\n")
+        f.write(f"  平均耗时: {summary['average_duration']:.2f}秒\n")
+        f.write(f"  成功率: {summary['success_rate']*100:.1f}%\n\n")
+        
+        f.write("所有尝试:\n")
+        for i, attempt in enumerate(attempts, 1):
+            f.write(f"  {i}. {attempt['model']} ({attempt['prompt']}): ")
+            if attempt["success"]:
+                f.write(f"成功 ({attempt['duration']:.2f}s)\n")
+            else:
+                error_type = attempt.get("error_type", "Unknown")
+                f.write(f"失败 - {error_type}: {attempt['error']}\n")
+    
+    # 保存详细的API调用历史（JSON格式）
+    api_log_file = os.path.join(debug_dir, f"{file_name}_api_calls.json")
+    with open(api_log_file, "w", encoding="utf-8") as f:
+        json.dump(monitor.call_history, f, indent=2, default=str, ensure_ascii=False)
+    
+    print(f"  API调用详情已保存到: {api_log_file}")
+
+def classify_error_type(error_message):
+    """根据错误消息分类错误类型"""
+    error_msg_lower = error_message.lower()
+    
+    # API连接相关错误
+    network_keywords = ["timeout", "connection", "network", "dns", "ssl", "certificate", "unreachable"]
+    if any(keyword in error_msg_lower for keyword in network_keywords):
+        return ErrorType.NETWORK_ERROR
+    
+    # API相关错误
+    api_keywords = ["api", "authentication", "unauthorized", "forbidden", "rate limit", "quota"]
+    if any(keyword in error_msg_lower for keyword in api_keywords):
+        return ErrorType.API_ERROR
+    
+    # 编译错误
+    compilation_keywords = ["syntax error", "compilation error", "compile", "nvcc", "undefined", "redefinition"]
+    if any(keyword in error_msg_lower for keyword in compilation_keywords):
+        return ErrorType.COMPILATION_ERROR
+    
+    # 运行时错误
+    runtime_keywords = ["runtime error", "execution", "cuda", "kernel", "memory", "device"]
+    if any(keyword in error_msg_lower for keyword in runtime_keywords):
+        return ErrorType.RUNTIME_ERROR
+    
+    # 默认为运行时错误
+    return ErrorType.RUNTIME_ERROR
+
 def eval_single_file_enhanced(file_name: str, verbose: bool = False) -> TestResult:
     """增强版单文件评测"""
     print(f"\n=== 评测 {file_name} ===")
@@ -259,20 +628,25 @@ def eval_single_file_enhanced(file_name: str, verbose: bool = False) -> TestResu
         with open(triton_file_path, "r") as f:
             triton_code = f.read()
         
-        # 第二步：转换为CUDA代码
+        # 第二步：转换为CUDA代码（使用增强版）
         print("  正在转换Triton代码为CUDA代码...")
         try:
-            cuda_code = triton2cuda(triton_code)
+            cuda_code, conversion_attempts, api_call_history = enhanced_triton2cuda_with_monitoring(triton_code, file_name)
             result.cuda_code = cuda_code
             
+            # 记录转换详情和API调用历史
+            result.conversion_details = conversion_attempts
+            result.api_call_history = api_call_history
+            
             if not cuda_code.strip():
-                result.set_error(ErrorType.RUNTIME_ERROR, "triton2cuda返回空代码")
+                result.set_error(ErrorType.RUNTIME_ERROR, "转换后的代码为空")
                 return result
                 
             print(f"  转换成功，代码长度: {len(cuda_code)} 字符")
             
         except Exception as e:
-            result.set_error(ErrorType.RUNTIME_ERROR, f"CUDA代码生成失败: {str(e)}")
+            error_type = classify_error_type(str(e))
+            result.set_error(error_type, f"CUDA代码生成失败: {str(e)}")
             if verbose:
                 result.error_message += f"\n详细错误:\n{traceback.format_exc()}"
             # 保存调试信息
@@ -364,7 +738,8 @@ def eval_single_file_enhanced(file_name: str, verbose: bool = False) -> TestResu
         return result
         
     except Exception as e:
-        result.set_error(ErrorType.RUNTIME_ERROR, f"评测过程发生异常: {str(e)}")
+        error_type = classify_error_type(str(e))
+        result.set_error(error_type, f"评测过程发生异常: {str(e)}")
         if verbose:
             result.error_message += f"\n详细错误:\n{traceback.format_exc()}"
         result.calculate_total_score()
@@ -426,6 +801,37 @@ def save_result_report(results: List[TestResult], output_file: str = "evaluation
             f.write(f"  {error_type}: {count}\n")
         f.write("\n")
         
+        # API调用统计汇总
+        total_api_calls = 0
+        total_api_duration = 0
+        successful_api_calls = 0
+        api_error_types = {}
+        
+        for result in results:
+            if hasattr(result, 'api_call_history') and result.api_call_history:
+                for call in result.api_call_history:
+                    total_api_calls += 1
+                    total_api_duration += call.get('duration', 0)
+                    if call.get('success', False):
+                        successful_api_calls += 1
+                    else:
+                        error_type = call.get('error_details', {}).get('error_type', 'Unknown')
+                        api_error_types[error_type] = api_error_types.get(error_type, 0) + 1
+        
+        f.write(f"API调用统计汇总:\n")
+        f.write(f"  总API调用次数: {total_api_calls}\n")
+        f.write(f"  成功API调用: {successful_api_calls}\n")
+        f.write(f"  失败API调用: {total_api_calls - successful_api_calls}\n")
+        f.write(f"  API成功率: {successful_api_calls/total_api_calls*100:.1f}%\n" if total_api_calls > 0 else "  API成功率: N/A\n")
+        f.write(f"  总API耗时: {total_api_duration:.2f}秒\n")
+        f.write(f"  平均API耗时: {total_api_duration/total_api_calls:.2f}秒\n" if total_api_calls > 0 else "  平均API耗时: N/A\n")
+        
+        if api_error_types:
+            f.write(f"  API错误类型分布:\n")
+            for error_type, count in api_error_types.items():
+                f.write(f"    {error_type}: {count}\n")
+        f.write("\n")
+        
         # 按错误类型分类显示文件
         f.write("按错误类型分类:\n")
         for error_type in ErrorType:
@@ -444,6 +850,14 @@ def save_result_report(results: List[TestResult], output_file: str = "evaluation
         f.write(f"  编译通过: {compilation_success}/{total_files} ({compilation_success/total_files*100:.1f}%)\n")
         f.write(f"  有准确性分数: {accuracy_success}/{total_files} ({accuracy_success/total_files*100:.1f}%)\n\n")
         
+        # API连接和调用统计
+        network_errors = sum(1 for r in results if r.error_type == ErrorType.NETWORK_ERROR)
+        api_errors = sum(1 for r in results if r.error_type == ErrorType.API_ERROR)
+        
+        f.write(f"API相关统计:\n")
+        f.write(f"  API连接错误: {network_errors}/{total_files} ({network_errors/total_files*100:.1f}%)\n")
+        f.write(f"  API调用错误: {api_errors}/{total_files} ({api_errors/total_files*100:.1f}%)\n\n")
+        
         # 详细结果
         f.write("详细结果:\n")
         f.write("-" * 60 + "\n")
@@ -452,6 +866,30 @@ def save_result_report(results: List[TestResult], output_file: str = "evaluation
             f.write(f"\n文件: {result.file_name}\n")
             f.write(f"总分: {result.total_score}/10 (编译: {result.compilation_score}/1, 准确性: {result.accuracy_score}/9)\n")
             f.write(f"错误类型: {result.error_type.value}\n")
+            
+            # API调用详情
+            if hasattr(result, 'api_call_history') and result.api_call_history:
+                f.write("API调用详情:\n")
+                for i, call in enumerate(result.api_call_history, 1):
+                    status = "成功" if call.get('success', False) else "失败"
+                    duration = call.get('duration', 0)
+                    model = call.get('model_type', 'Unknown')
+                    f.write(f"  调用{i}: {model} - {status} ({duration:.2f}s)\n")
+                    
+                    if not call.get('success', False) and call.get('error_details'):
+                        error_info = call['error_details']
+                        f.write(f"    错误类型: {error_info.get('error_type', 'Unknown')}\n")
+                        f.write(f"    错误信息: {error_info.get('error_message', '')[:100]}...\n")
+            
+            # 转换详情
+            if hasattr(result, 'conversion_details') and result.conversion_details:
+                f.write("转换尝试详情:\n")
+                for i, attempt in enumerate(result.conversion_details, 1):
+                    if attempt["success"]:
+                        f.write(f"  {i}. {attempt['model']} ({attempt['prompt']}): 成功 ({attempt['duration']:.2f}s, {attempt['code_length']} 字符)\n")
+                    else:
+                        error_type = attempt.get('error_type', 'Unknown')
+                        f.write(f"  {i}. {attempt['model']} ({attempt['prompt']}): 失败 ({attempt['duration']:.2f}s) - {error_type}\n")
             
             if result.error_message:
                 f.write(f"错误信息: {result.error_message}\n")
@@ -470,6 +908,13 @@ def save_result_report(results: List[TestResult], output_file: str = "evaluation
                 with open(cuda_file, "w") as cuda_f:
                     cuda_f.write(result.cuda_code)
                 f.write(f"CUDA代码已保存到: {cuda_file}\n")
+            
+            # 保存API调用详情（如果有的话）
+            if hasattr(result, 'api_call_history') and result.api_call_history:
+                api_file = os.path.join(debug_dir, f"{result.file_name}_api_details.json")
+                with open(api_file, "w", encoding="utf-8") as api_f:
+                    json.dump(result.api_call_history, api_f, indent=2, default=str, ensure_ascii=False)
+                f.write(f"API调用详情已保存到: {api_file}\n")
             
             f.write("-" * 40 + "\n")
     
@@ -544,6 +989,18 @@ def print_final_summary(results: List[TestResult]):
     for error_type, count in error_stats.items():
         print(f"  {error_type}: {count}")
     
+    # 特别关注API相关错误
+    network_errors = error_stats.get("NetworkError", 0)
+    api_errors = error_stats.get("APIError", 0)
+    
+    if network_errors > 0 or api_errors > 0:
+        print(f"\n⚠️  API相关问题:")
+        if network_errors > 0:
+            print(f"  API连接错误: {network_errors} 个文件")
+        if api_errors > 0:
+            print(f"  API调用错误: {api_errors} 个文件")
+        print(f"  建议: 检查API配置和端点可用性")
+    
     # 按错误类型分类显示文件
     print(f"\n按错误类型分类:")
     for error_type in ErrorType:
@@ -561,30 +1018,96 @@ def print_final_summary(results: List[TestResult]):
     print(f"  编译通过: {compilation_success}/{total_files} ({compilation_success/total_files*100:.1f}%)")
     print(f"  有准确性分数: {accuracy_success}/{total_files} ({accuracy_success/total_files*100:.1f}%)")
 
+# 新增：API连通性测试函数
+def test_api_connectivity():
+    """测试API端点可用性"""
+    print("=== API连通性测试 ===")
+    
+    # API端点测试
+    print("API端点测试:")
+    api_status = NetworkMonitor.check_api_endpoints()
+    
+    for name, status in api_status.items():
+        if status.get("available", False):
+            response_time = status.get("response_time", 0)
+            print(f"  {name}: ✓ 可用 (响应时间: {response_time:.2f}s)")
+        else:
+            error = status.get("error", "不可用")
+            print(f"  {name}: ✗ 不可用 ({error})")
+    
+    available_apis = [name for name, status in api_status.items() if status.get("available", False)]
+    
+    if available_apis:
+        print(f"\n可用API: {', '.join(available_apis)}")
+        return True
+    else:
+        print("\n❌ 所有API都不可用")
+        return False
+
 if __name__ == "__main__":
     try:
         parser = argparse.ArgumentParser(description="Triton到CUDA转换评测系统")
         parser.add_argument("--file", type=str, help="评测单个文件")
         parser.add_argument("--all", action="store_true", help="评测所有文件")
         parser.add_argument("--verbose", action="store_true", help="详细输出")
+        parser.add_argument("--network", action="store_true", help="测试API端点可用性")
         parser.add_argument("--output", type=str, default="evaluation_report.txt", help="报告输出文件名（将保存到debug_output文件夹）")
         
         args = parser.parse_args()
         
-        if args.file:
+        # 检查是否需要安装requests库
+        try:
+            import requests
+        except ImportError:
+            print("❌ 需要安装requests库")
+            print("请运行: pip install requests")
+            exit(1)
+        
+        if args.network:
+            # API连通性测试
+            success = test_api_connectivity()
+            if not success:
+                print("\n建议:")
+                print("1. 验证API密钥配置")
+                print("2. 确认防火墙设置")
+                print("3. 尝试使用VPN或代理")
+                print("4. 检查API服务是否正常运行")
+            exit(0)
+        
+        elif args.file:
             # 单文件评测
             result = eval_single_file_enhanced(args.file, args.verbose)
             print(f"\n{result.get_summary()}")
+            
+            # 显示API相关提示
+            if result.error_type in [ErrorType.NETWORK_ERROR, ErrorType.API_ERROR]:
+                print("\n💡 API相关错误解决建议:")
+                print("1. 运行 --network 参数测试API端点可用性")
+                print("2. 检查API密钥是否正确配置")
+                print("3. 确认API服务是否正常运行")
+                print("4. 尝试切换网络环境或使用代理")
+            
             save_result_report([result], f"{args.file}_evaluation_report.txt")
+            
         elif args.all:
             # 批量评测
             results = eval_all_files_enhanced(args.verbose)
             print_final_summary(results)
             save_result_report(results, args.output)
+            
         else:
             # 默认测试flashatt.py
             result = eval_single_file_enhanced("flashatt.py", verbose=True)
             print(f"\n{result.get_summary()}")
+            
+            # 显示API相关提示
+            if result.error_type in [ErrorType.NETWORK_ERROR, ErrorType.API_ERROR]:
+                print("\n💡 API相关错误解决建议:")
+                print("1. 运行 --network 参数测试API端点可用性")
+                print("2. 检查API密钥是否正确配置")
+                print("3. 确认API服务是否正常运行")
+                print("4. 尝试切换网络环境或使用代理")
+            
             save_result_report([result], "flashatt_evaluation_report.txt")
         
     except Exception as e:
