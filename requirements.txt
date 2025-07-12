@@ -13,7 +13,24 @@ ninja>=1.10.0
 
 # LLM API客户端
 zhipuai>=2.1.0,<3.0.0
+anthropic>=0.37.0  # Anthropic Claude API客户端
+openai>=1.0.0      # OpenAI GPT API客户端
+
+# 数据处理和并发
+pandas>=1.5.0      # 数据处理和CSV输出
+numpy>=1.21.0,<2.0.0  # 数值计算
 
 # 开发和测试工具
-# pytest>=7.0.0
-# numpy>=1.21.0,<2.0.0
+pytest>=7.0.0      # 测试框架
+tqdm>=4.64.0       # 进度条显示
+pathlib>=1.0.1     # 路径处理（Python 3.4+内置，但明确声明）
+
+# 可选：其他实用工具
+# jupyterlab>=3.0.0  # 如果需要Jupyter notebook环境
+# matplotlib>=3.5.0  # 如果需要绘图功能
+# seaborn>=0.11.0    # 如果需要统计图表
+
+# 开发环境依赖（可选）
+# black>=22.0.0      # 代码格式化
+# flake8>=4.0.0      # 代码检查
+# mypy>=0.991        # 类型检查

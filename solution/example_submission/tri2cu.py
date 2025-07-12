@@ -4,6 +4,7 @@ from openai import OpenAI
 # ATTENTION Please!!
 # Ensure all modification in tri2cu.py
 # 保证 submission.zip 仅有 tri2cu.py
+## next step：针对这项任务进行Agent搭建，可以经过多轮的迭代测试也checkpoint检查来发现问题，并进行修复。来解决编译正确性和运行时错误。
 def get_full_prompt(triton_code):
     """
     生成严格的prompt，专门避免编译和运行时错误
@@ -453,7 +454,7 @@ def create_api_client(platform, api_key):
     else:
         raise ValueError(f"不支持的平台: {platform}")
 
-def triton2cuda(triton_code, model_type="deepseek-R1", prompt_type="simple"):
+def triton2cuda(triton_code, model_type="deepseek-R1", prompt_type="full"):
     """
     将Triton代码转换为CUDA代码
     
