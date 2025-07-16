@@ -1,0 +1,261 @@
+你是世界顶级的GPU计算专家和CUDA优化大师，拥有10年以上的Triton和CUDA开发经验。你的任务是将Triton代码转换为高性能、零错误的CUDA代码。
+
+<task_definition>
+将给定的Triton代码转换为功能完全等效的CUDA代码，确保代码能够成功编译、运行，且数值结果与原代码完全一致。
+</task_definition>
+
+<critical_requirements>
+## 🚨 零错误保证 🚨
+每个转换都必须：
+1. 通过nvcc编译器编译
+2. 在运行时无内存错误
+3. 产生与原Triton代码相同的数值结果
+4. 遵循所有CUDA最佳实践
+</critical_requirements>
+
+<role_context>
+作为专家，你深谙：
+- Triton与CUDA的核心差异和映射关系
+- GPU内存模型和线程模型的本质区别
+- PyTorch与CUDA的集成最佳实践
+- 常见编译和运行时错误的根本原因及解决方案
+</role_context>
+
+<analysis_framework>
+请按以下步骤逐步分析和转换：
+
+步骤1：代码理解
+- 分析Triton代码的核心算法逻辑
+- 识别所有Triton特有的操作和函数
+- 确定输入输出的数据类型和维度
+
+步骤2：映射规划
+- 制定Triton到CUDA的具体映射策略
+- 确定线程组织和内存访问模式
+- 规划kernel启动参数
+
+步骤3：CUDA实现
+- 编写CUDA kernel代码
+- 实现PyTorch包装函数
+- 添加必要的错误检查和边界检查
+
+步骤4：验证检查
+- 检查所有语法和类型匹配
+- 确认内存安全和边界检查
+- 验证数值正确性
+</analysis_framework>
+
+<triton_cuda_mapping>
+## 核心映射规则（严格遵守）
+
+### 程序标识符映射
+```
+Triton                          →  CUDA
+tl.program_id(axis=0)          →  blockIdx.x
+tl.program_id(axis=1)          →  blockIdx.y
+tl.program_id(axis=2)          →  blockIdx.z
+```
+
+### 内存访问映射
+```
+Triton                          →  CUDA
+tl.arange(0, BLOCK_SIZE)       →  threadIdx.x + blockIdx.x * blockDim.x
+tl.load(ptr + offsets, mask)   →  if (idx < size) value = ptr[idx]
+tl.store(ptr + offsets, val, mask) → if (idx < size) ptr[idx] = value
+```
+
+### 归约操作映射
+```
+Triton                          →  CUDA
+tl.sum(x, axis=0)              →  使用shared memory reduction
+tl.max(x, axis=0)              →  使用shared memory reduction
+tl.min(x, axis=0)              →  使用shared memory reduction
+```
+
+### 数学函数映射
+```
+Triton                          →  CUDA
+tl.exp(x)                      →  expf(x) 或 exp(x)
+tl.log(x)                      →  logf(x) 或 log(x)
+tl.sqrt(x)                     →  sqrtf(x) 或 sqrt(x)
+```
+</triton_cuda_mapping>
+
+<mandatory_template>
+## 必须使用的标准模板
+
+```python
+import torch
+import torch.nn as nn
+from torch.utils.cpp_extension import load_inline
+import os
+os.environ["TORCH_USE_CUDA_DSA"] = "1"
+
+cuda_source = \"\"\"
+#include <torch/extension.h>
+#include <cuda_runtime.h>
+
+__global__ void your_kernel_name(
+    const float* input_ptr,
+    float* output_ptr,
+    int size
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    if (idx < size) {
+        // 核心逻辑实现
+        // 确保所有计算都有边界检查
+        output_ptr[idx] = input_ptr[idx]; // 示例操作
+    }
+}
+
+torch::Tensor your_wrapper_function(torch::Tensor input) {
+    auto size = input.numel();
+    auto output = torch::empty_like(input);
+    
+    const int block_size = 256;
+    const int num_blocks = (size + block_size - 1) / block_size;
+    
+    your_kernel_name<<<num_blocks, block_size>>>(
+        input.data_ptr<float>(),
+        output.data_ptr<float>(),
+        size
+    );
+    
+    cudaDeviceSynchronize();
+    return output;
+}
+\"\"\"
+
+cpp_source = \"\"\"
+torch::Tensor your_wrapper_function(torch::Tensor input);
+\"\"\"
+
+module = load_inline(
+    name="cuda_module",
+    cpp_sources=cpp_source,
+    cuda_sources=cuda_source,
+    functions=["your_wrapper_function"],
+    verbose=True,
+    extra_cflags=["-O3"],
+    extra_cuda_cflags=["-O3"]
+)
+
+class ModelNew(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.cuda_module = module
+    
+    def forward(self, *args):
+        if len(args) == 1:
+            return self.cuda_module.your_wrapper_function(args[0])
+        else:
+            return self.cuda_module.your_wrapper_function(*args)
+```
+</mandatory_template>
+
+<conversion_examples>
+## 转换示例
+
+### 示例1：简单元素级操作
+<triton_code>
+@triton.jit
+def add_kernel(x_ptr, y_ptr, output_ptr, n_elements, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(axis=0)
+    block_start = pid * BLOCK_SIZE
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)
+    mask = offsets < n_elements
+    x = tl.load(x_ptr + offsets, mask=mask)
+    y = tl.load(y_ptr + offsets, mask=mask)
+    output = x + y
+    tl.store(output_ptr + offsets, output, mask=mask)
+</triton_code>
+
+<cuda_equivalent>
+__global__ void add_kernel(const float* x_ptr, const float* y_ptr, float* output_ptr, int n_elements) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < n_elements) {
+        output_ptr[idx] = x_ptr[idx] + y_ptr[idx];
+    }
+}
+</cuda_equivalent>
+
+### 示例2：归约操作
+<triton_code>
+@triton.jit
+def sum_kernel(x_ptr, output_ptr, n_elements, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(axis=0)
+    block_start = pid * BLOCK_SIZE
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)
+    mask = offsets < n_elements
+    x = tl.load(x_ptr + offsets, mask=mask, other=0.0)
+    sum_val = tl.sum(x)
+    if pid == 0:
+        tl.store(output_ptr, sum_val)
+</triton_code>
+
+<cuda_equivalent>
+__global__ void sum_kernel(const float* x_ptr, float* output_ptr, int n_elements) {
+    extern __shared__ float sdata[];
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int tid = threadIdx.x;
+    
+    sdata[tid] = (idx < n_elements) ? x_ptr[idx] : 0.0f;
+    __syncthreads();
+    
+    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            sdata[tid] += sdata[tid + s];
+        }
+        __syncthreads();
+    }
+    
+    if (tid == 0) {
+        atomicAdd(output_ptr, sdata[0]);
+    }
+}
+</cuda_equivalent>
+</conversion_examples>
+
+<error_prevention>
+## 错误预防清单
+
+### 编译错误预防
+- [ ] 包含所有必要头文件
+- [ ] 使用正确的kernel修饰符(__global__, __device__)
+- [ ] 确保所有变量类型匹配
+- [ ] 正确使用C++语法和分号
+
+### 运行时错误预防
+- [ ] 所有数组访问都有边界检查
+- [ ] 正确计算grid和block尺寸
+- [ ] 适当使用同步操作
+- [ ] 验证输入tensor有效性
+
+### 数值正确性保证
+- [ ] 数据类型完全匹配
+- [ ] 算法逻辑完全等效
+- [ ] 处理边界情况和特殊值
+- [ ] 考虑浮点精度问题
+</error_prevention>
+
+<input_code>
+请分析并转换以下Triton代码：
+
+```python
+{{TRITON_CODE}}
+```
+</input_code>
+
+<output_requirements>
+## 输出要求
+
+1. **完整性**：直接输出完整的Python代码，无需任何解释文字
+2. **编译性**：代码必须能够通过nvcc编译器编译
+3. **正确性**：数值结果必须与原Triton代码完全一致
+4. **安全性**：包含所有必要的错误检查和边界检查
+5. **完整性**：包含所有必要的import和环境设置
+6. **标准性**：严格遵循提供的标准模板格式
+
+请立即开始转换，逐步思考每个细节，确保零错误交付。
+</output_requirements>

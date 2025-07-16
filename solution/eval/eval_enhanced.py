@@ -233,6 +233,70 @@ def get_inputs_for_file(file_name):
                 torch.randn(64, 16, device='cuda', dtype=torch.float32)
             ]
         ]
+    elif file_name == "02-fused-softmax.py":
+        # 一个2D张量 (n_rows, n_cols)
+        return [
+            [torch.randn(32, 128, device='cuda', dtype=torch.float32)],
+            [torch.randn(64, 256, device='cuda', dtype=torch.float32)]
+        ]
+    elif file_name == "03-matrix-multiplication.py":
+        # 两个2D张量 a (M, K) 和 b (K, N)
+        return [
+            [torch.randn(128, 64, device='cuda', dtype=torch.float32), torch.randn(64, 32, device='cuda', dtype=torch.float32)],
+            [torch.randn(256, 128, device='cuda', dtype=torch.float32), torch.randn(128, 64, device='cuda', dtype=torch.float32)]
+        ]
+    elif file_name == "04-low-memory-dropout.py":
+        # 一个张量 x、一个float值 p 和一个int值 seed
+        return [
+            [torch.randn(1024, device='cuda', dtype=torch.float32), 0.1, 42],
+            [torch.randn(2048, device='cuda', dtype=torch.float32), 0.2, 123]
+        ]
+    elif file_name == "05-layer-norm.py":
+        # 三个张量 x、weight、bias，和一个float值 eps
+        return [
+            [torch.randn(32, 256, device='cuda', dtype=torch.float32), torch.randn(256, device='cuda', dtype=torch.float32), torch.randn(256, device='cuda', dtype=torch.float32), 1e-5],
+            [torch.randn(64, 512, device='cuda', dtype=torch.float32), torch.randn(512, device='cuda', dtype=torch.float32), torch.randn(512, device='cuda', dtype=torch.float32), 1e-5]
+        ]
+    elif file_name == "06-fused-attention.py":
+        # 三个4D张量 q, k, v (BATCH, N_HEAD, N_CTX, HEAD_DIM)
+        return [
+            [torch.randn(2, 8, 128, 64, device='cuda', dtype=torch.float16), torch.randn(2, 8, 128, 64, device='cuda', dtype=torch.float16), torch.randn(2, 8, 128, 64, device='cuda', dtype=torch.float16), True, 1.0],
+            [torch.randn(4, 16, 256, 32, device='cuda', dtype=torch.float16), torch.randn(4, 16, 256, 32, device='cuda', dtype=torch.float16), torch.randn(4, 16, 256, 32, device='cuda', dtype=torch.float16), True, 1.0]
+        ]
+    elif file_name == "08-grouped-gemm.py":
+        # 两个列表 group_A 和 group_B，每个包含多个2D张量
+        return [
+            [
+                [torch.randn(32, 64, device='cuda', dtype=torch.float16), torch.randn(64, 32, device='cuda', dtype=torch.float16), torch.randn(48, 96, device='cuda', dtype=torch.float16)],
+                [torch.randn(64, 32, device='cuda', dtype=torch.float16), torch.randn(32, 48, device='cuda', dtype=torch.float16), torch.randn(96, 64, device='cuda', dtype=torch.float16)]
+            ],
+            [
+                [torch.randn(16, 32, device='cuda', dtype=torch.float16), torch.randn(24, 48, device='cuda', dtype=torch.float16)],
+                [torch.randn(32, 16, device='cuda', dtype=torch.float16), torch.randn(48, 24, device='cuda', dtype=torch.float16)]
+            ]
+        ]
+    elif file_name == "09-persistent-matmul.py":
+        # 两个2D张量 a (M, K) 和 b (K, N)
+        return [
+            [torch.randn(128, 64, device='cuda', dtype=torch.float16), torch.randn(64, 32, device='cuda', dtype=torch.float16)],
+            [torch.randn(256, 128, device='cuda', dtype=torch.float16), torch.randn(128, 64, device='cuda', dtype=torch.float16)]
+        ]
+    elif file_name == "10-block-scaled-matmul.py":
+        # 四个张量 a, b, a_scale, b_scale
+        return [
+            [
+                torch.randn(128, 64, device='cuda', dtype=torch.float16),
+                torch.randn(64, 32, device='cuda', dtype=torch.float16),
+                torch.randn(32, 8, device='cuda', dtype=torch.float32),
+                torch.randn(8, 8, device='cuda', dtype=torch.float32)
+            ],
+            [
+                torch.randn(256, 128, device='cuda', dtype=torch.float16),
+                torch.randn(128, 64, device='cuda', dtype=torch.float16),
+                torch.randn(64, 16, device='cuda', dtype=torch.float32),
+                torch.randn(16, 16, device='cuda', dtype=torch.float32)
+            ]
+        ]
     else:
         return [
             [torch.randn(1024, device='cuda', dtype=torch.float32)],
@@ -372,6 +436,7 @@ def enhanced_triton2cuda_with_monitoring(triton_code, file_name="unknown"):
     
     # 2. 尝试不同的模型和prompt策略
     models_to_try = [
+        ("claude-sonnet-4", "full"),
         ("deepseek-R1", "robust"),
         ("claude-sonnet-4", "full"),
         ("glm-4-plus", "function"),
